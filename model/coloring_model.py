@@ -2,10 +2,11 @@
 from gurobipy import Model
 
 from model.abstract_model import AbstractModel
+from util.util import add_logs_cwd
 
 
 class ColoringModel(AbstractModel):
-    def __init__(self, graph, config, upper_bound=None):
+    def __init__(self, graph, config, upper_bound=None, lower_bound=None):
         self.graph = graph
         self.config = config
         self.name = config['model_name']
@@ -14,6 +15,10 @@ class ColoringModel(AbstractModel):
             self.upper_bound = len(self.graph.get_nodes())
         else:
             self.upper_bound = upper_bound
+        if lower_bound:
+            self.lower_bound = lower_bound
+        else:
+            self.lower_bound = None
         self.nodes = graph.get_nodes()
         self.edges = graph.get_edges()
 
@@ -32,6 +37,7 @@ class ColoringModel(AbstractModel):
 
     def _optimize(self):
         # Print the name of the model in the log for further analysis.
+        self.m.Params.log_file = f'{add_logs_cwd(self.name)}.log'
         self.m.message('')
         self.m.message(self.name)
         self.m.Params.mip_gap = self.config['mip_gap']
