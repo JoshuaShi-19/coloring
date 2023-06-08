@@ -4,17 +4,18 @@ from typing import Optional
 import pandas as pd
 
 from output_handler.plot import draw_iteration
-from output_handler.regex_util import typeconvert_groupdict
-from util.util import add_output_cwd, add_fig_cwd
+from output_handler.regex_util import typeconvert_groupdict, get_last_occurrence
+from util.util import add_output_cwd, add_figure_cwd
 
 float_pattern = r"[-+]?((\d*\.\d+)|(\d+\.?))([Ee][+-]?\d+)?"
 
 
-class Analyzer(object):
-    def __init__(self):
+class GurobiAnalyzer(object):
+    def __init__(self, file_name):
         columns = ['Instance', 'Model', 'Time', 'UB', 'LB', 'Gap', 'Presolve time', 'Root node time', 'Initial rows',
                    'Initial columns', 'Presolved rows', 'Presolved columns']
         self.result = {column: list() for column in columns}
+        self.file_name = file_name
         return
 
     def parse_log(self, log_name: str, model: str, instance: str, is_iteration_parsed: bool = False):
@@ -33,11 +34,12 @@ class Analyzer(object):
             gap, lb, ub = self._get_obj_info(text)
             total_time = self._get_total_time(text)
             root_node_time = self._get_root_node(text)
-            initial_columns, initial_rows = self._get_initial_size(text)
-            presolve_time, presolved_columns, presolved_rows = self._get_presolve_info(text)
+            initial_rows, initial_columns = self._get_initial_size(text)
+            presolve_time, presolved_rows, presolved_columns = self._get_presolve_info(text)
             if is_iteration_parsed:
                 df_iteration = self._get_iteration_info(text)
-                draw_iteration(df_iteration, file_name=add_fig_cwd(f'{model}_{instance}.jpg'))
+                if not df_iteration.empty:
+                    draw_iteration(df_iteration, file_name=add_figure_cwd(f'{model}_{instance}.jpg'))
 
             self._add_record(instance, model, total_time, ub, lb, gap, presolve_time, root_node_time, initial_rows,
                              initial_columns, presolved_rows, presolved_columns)
@@ -67,14 +69,14 @@ class Analyzer(object):
         presolve_time = float(m[0])
         presolved_rows = int(m[1])
         presolved_columns = int(m[2])
-        return presolve_time, presolved_columns, presolved_rows
+        return presolve_time,  presolved_rows, presolved_columns
 
     def _get_initial_size(self, text):
         initial_prob_pattern = r'Optimize a model with (\d+) rows, (\d+) columns and (\d+) nonzeros'
         m = re.findall(initial_prob_pattern, text)[-1]
         initial_rows = int(m[0])
         initial_columns = int(m[1])
-        return initial_columns, initial_rows
+        return initial_rows, initial_columns
 
     def _get_root_node(self, text):
         root_node_pattern = r'Root relaxation: objective (\d+\.\d+e\+\d+), (\d+) iterations, (\d+\.\d+) seconds'
@@ -143,18 +145,22 @@ class Analyzer(object):
                 )
             ),
         ]
-        last_iter_index = text.rfind('Expl')
-        if last_iter_index:
-            text = text[last_iter_index:].split('\n,')
+        text = get_last_occurrence(text, 'Expl ')
+        if text:
+            text = text.split('\n,')
             for line in text:
-                for regex in line_types:
-                    match = re.match(regex, line)
-                    if match:
-                        progress.append(typeconvert_groupdict(match))
-                        break
+                progress = self.match_line_type(line, line_types, progress)
             return pd.DataFrame(progress)
         else:
             return None
+
+    def match_line_type(self, line, line_types, progress):
+        for regex in line_types:
+            match = re.match(regex, line)
+            if match:
+                progress.append(typeconvert_groupdict(match))
+                break
+        return progress
 
     def _add_record(self, instance, model, total_time, ub, lb, gap, presolve_time, root_node_time, initial_rows,
                     initial_columns, presolved_rows, presolved_columns):
@@ -174,5 +180,25 @@ class Analyzer(object):
 
     def write_summary(self):
         df = pd.DataFrame(self.result)
-        df.to_csv(add_output_cwd('result.csv'), index=False, encoding='utf-8-sig')
+        df.to_csv(add_output_cwd(self.file_name), index=False, encoding='utf-8-sig')
+        return
+
+
+class InstanceAnalyzer(object):
+    def __init__(self, file_name):
+        columns = ['Instance', 'Node', 'Edge', 'Upper bound', 'Lower bound']
+        self.result = {column: [] for column in columns}
+        self.file_name = file_name
+
+    def add_record(self, instance, node, edge, upper_bound, lower_bound):
+        self.result['Instance'].append(instance)
+        self.result['Node'].append(node)
+        self.result['Edge'].append(edge)
+        self.result['Upper bound'].append(upper_bound)
+        self.result['Lower bound'].append(lower_bound)
+        return
+
+    def write_summary(self):
+        df = pd.DataFrame(self.result)
+        df.to_csv(add_output_cwd(self.file_name), index=False, encoding='utf-8-sig')
         return
